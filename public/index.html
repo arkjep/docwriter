@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Google Docs AI Writing Assistant</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>Docs Writing Assistant</h1>
+          <p id="status">Checking connection...</p>
+        </div>
+        <div class="actions">
+          <button id="connect-copilot" class="secondary">Connect Copilot</button>
+          <a class="button secondary" href="/auth/google/switch">Switch Google</a>
+          <a class="button secondary" href="/auth/google">Connect Google</a>
+        </div>
+      </header>
+
+      <section id="copilot-panel" class="panel copilot-panel hidden">
+        <div class="panel-header">
+          <h2>GitHub Copilot</h2>
+          <button id="close-copilot" class="secondary">Close</button>
+        </div>
+        <p class="muted">Use a supported Copilot token, or start device login if a Copilot OAuth client ID is configured.</p>
+        <div class="token-row">
+          <input id="copilot-token" type="password" placeholder="COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN" />
+          <button id="save-copilot-token">Save Token</button>
+          <button id="start-copilot-device" class="secondary">Device Login</button>
+        </div>
+        <div id="copilot-device" class="device-box hidden"></div>
+      </section>
+
+      <section class="doc-loader">
+        <div class="doc-input-wrap">
+          <input id="doc-input" placeholder="Paste Google Doc ID or URL" />
+          <div id="parsed-doc-id" class="parsed-id">Paste a Docs URL or raw document ID.</div>
+        </div>
+        <button id="load-doc">Load Doc</button>
+        <button id="list-docs" class="secondary">Recent Docs</button>
+      </section>
+
+      <section id="recent-docs" class="recent hidden"></section>
+
+      <div class="workspace">
+        <section class="panel document-panel">
+          <div class="panel-header">
+            <h2 id="doc-title">Document</h2>
+          </div>
+          <div id="outline" class="outline empty">Load a Google Doc to inspect its paragraphs.</div>
+        </section>
+
+        <section class="panel chat-panel">
+          <div class="panel-header">
+            <h2>AI Chat</h2>
+            <label class="dry-run"><input id="dry-run" type="checkbox" /> Dry run</label>
+          </div>
+          <div id="chat-log" class="chat-log"></div>
+          <textarea id="message" rows="4" placeholder="Ask for writing help..."></textarea>
+          <button id="send">Generate Edits</button>
+        </section>
+      </div>
+
+      <section class="panel preview-panel">
+        <div class="panel-header">
+          <h2>Preview</h2>
+          <button id="apply" disabled>Apply</button>
+        </div>
+        <div id="preview" class="preview empty">AI edit proposals will appear here before anything is applied.</div>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
