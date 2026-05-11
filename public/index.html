@@ -9,69 +9,158 @@
   <body>
     <main class="app-shell">
       <header class="topbar">
-        <div>
+        <div class="status-cluster">
+          <span id="google-status" class="status-icon" aria-label="Google connection" title="Google connection">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.8 12.2c0-.8-.1-1.5-.2-2.2H12v4.2h5.5c-.2 1.3-1 2.4-2.1 3.1v2.6h3.4c2-1.8 3-4.5 3-7.7Z"/><path d="M12 22c2.9 0 5.3-1 7-2.6l-3.4-2.6c-.9.6-2.1 1-3.6 1-2.8 0-5.1-1.9-6-4.4H2.5v2.7C4.2 19.6 7.8 22 12 22Z"/><path d="M6 13.4c-.2-.6-.3-1.3-.3-2s.1-1.4.3-2V6.7H2.5C1.8 8.1 1.4 9.5 1.4 11.4s.4 3.3 1.1 4.7L6 13.4Z"/><path d="M12 5c1.6 0 3 .5 4.1 1.6l3-3C17.3 1.9 14.9 1 12 1 7.8 1 4.2 3.4 2.5 6.7L6 9.4C6.9 6.9 9.2 5 12 5Z"/></svg>
+          </span>
+          <span id="copilot-status" class="status-icon" aria-label="Copilot connection" title="Copilot connection">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 15.5c0 1.4 1.1 2.5 2.5 2.5h4c1.4 0 2.5-1.1 2.5-2.5v-4A4.5 4.5 0 0 0 12 7a4.5 4.5 0 0 0-4.5 4.5v4Z"/><path d="M6.5 11.5H5A2.5 2.5 0 0 0 2.5 14v1A2.5 2.5 0 0 0 5 17.5h1.5"/><path d="M17.5 11.5H19a2.5 2.5 0 0 1 2.5 2.5v1A2.5 2.5 0 0 1 19 17.5h-1.5"/><path d="M9 13h.01M15 13h.01M12 3v4"/></svg>
+          </span>
           <h1>Docs Writing Assistant</h1>
-          <p id="status">Checking connection...</p>
+          <p id="provider-badge">AI</p>
         </div>
-        <div class="actions">
-          <button id="connect-copilot" class="secondary">Connect Copilot</button>
-          <a class="button secondary" href="/auth/google/switch">Switch Google</a>
-          <a class="button secondary" href="/auth/google">Connect Google</a>
+        <div class="doc-context">
+          <span id="doc-title">No document loaded</span>
+        </div>
+        <div class="iconbar">
+          <button id="open-doc-modal" class="icon-button" aria-label="Open document" title="Open document">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H15l5 5v12.5a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 19.5v-15Z"/><path d="M14 2v6h6"/><path d="M8 12h8M8 16h8"/></svg>
+          </button>
+          <button id="open-connections-modal" class="icon-button" aria-label="Connections" title="Connections">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.1 0l-2 2A5 5 0 0 0 12 20.1l1.1-1.1"/></svg>
+          </button>
         </div>
       </header>
 
-      <section id="copilot-panel" class="panel copilot-panel hidden">
-        <div class="panel-header">
-          <h2>GitHub Copilot</h2>
-          <button id="close-copilot" class="secondary">Close</button>
-        </div>
-        <p class="muted">Use a supported Copilot token, or start device login if a Copilot OAuth client ID is configured.</p>
-        <div class="token-row">
-          <input id="copilot-token" type="password" placeholder="COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN" />
-          <button id="save-copilot-token">Save Token</button>
-          <button id="start-copilot-device" class="secondary">Device Login</button>
-        </div>
-        <div id="copilot-device" class="device-box hidden"></div>
-      </section>
+      <div class="workspace">
+        <section class="document-panel">
+          <nav id="tab-strip" class="tab-strip hidden" aria-label="Document tabs"></nav>
+          <div id="format-toolbar" class="format-toolbar hidden" aria-label="Draft formatting toolbar">
+            <button type="button" data-command="bold" title="Bold" aria-label="Bold">B</button>
+            <button type="button" data-command="italic" title="Italic"><i>I</i></button>
+            <button type="button" data-command="underline" title="Underline"><u>U</u></button>
+            <select id="font-family" title="Font family" aria-label="Font family"></select>
+            <select id="font-size" title="Font size" aria-label="Font size">
+              <option value="10">10</option>
+              <option value="11">11</option>
+              <option value="12" selected>12</option>
+              <option value="14">14</option>
+              <option value="16">16</option>
+              <option value="18">18</option>
+              <option value="24">24</option>
+            </select>
+            <button type="button" data-command="justifyLeft" title="Align left" aria-label="Align left">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 10h10M4 14h16M4 18h10"/></svg>
+            </button>
+            <button type="button" data-command="justifyCenter" title="Align center" aria-label="Align center">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 10h10M4 14h16M7 18h10"/></svg>
+            </button>
+            <button type="button" data-command="justifyRight" title="Align right" aria-label="Align right">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M10 10h10M4 14h16M10 18h10"/></svg>
+            </button>
+            <button type="button" data-paragraph-action="outdent" title="Decrease indent" aria-label="Decrease indent">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6H4M20 10H10M20 14H4M20 18H10M4 10l4 4M4 10l4-4"/></svg>
+            </button>
+            <button type="button" data-paragraph-action="indent" title="Increase indent" aria-label="Increase indent">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 10h10M4 14h16M4 18h10M20 10l-4 4M20 10l-4-4"/></svg>
+            </button>
+            <button type="button" data-paragraph-action="bullet" title="Bulleted list" aria-label="Bulleted list">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
+            </button>
+            <button type="button" data-paragraph-action="number" title="Numbered list" aria-label="Numbered list">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6h10M10 12h10M10 18h10M4 5h1v3M3.8 12h2.4L4 15h2M4 18h2v3H4"/></svg>
+            </button>
+            <button type="button" id="toggle-page-theme" class="secondary" title="Toggle dark page" aria-label="Toggle dark page">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.5A8.5 8.5 0 0 1 8.5 4a7 7 0 1 0 11.5 11.5Z"/></svg>
+            </button>
+          </div>
+          <div id="outline" class="outline empty">Open a Google Doc to inspect its paragraphs.</div>
+        </section>
 
-      <section class="doc-loader">
+        <aside class="assistant-panel">
+          <section class="chat-panel">
+            <div class="panel-header">
+              <h2>Assistant</h2>
+            </div>
+            <div id="chat-log" class="chat-log"></div>
+            <textarea id="message" rows="4" placeholder="Ask for writing help..."></textarea>
+            <button id="send">Generate Edits</button>
+          </section>
+
+          <section class="preview-panel">
+            <div class="panel-header">
+              <h2>Preview</h2>
+              <button id="apply" disabled>Apply</button>
+            </div>
+            <div id="preview" class="preview empty">Proposed edits will appear here.</div>
+          </section>
+        </aside>
+      </div>
+    </main>
+
+    <div id="document-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="document-modal-title">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2 id="document-modal-title">Open Document</h2>
+          <button class="icon-button" data-close-modal aria-label="Close" title="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+          </button>
+        </div>
         <div class="doc-input-wrap">
           <input id="doc-input" placeholder="Paste Google Doc ID or URL" />
           <div id="parsed-doc-id" class="parsed-id">Paste a Docs URL or raw document ID.</div>
         </div>
-        <button id="load-doc">Load Doc</button>
-        <button id="list-docs" class="secondary">Recent Docs</button>
-      </section>
-
-      <section id="recent-docs" class="recent hidden"></section>
-
-      <div class="workspace">
-        <section class="panel document-panel">
-          <div class="panel-header">
-            <h2 id="doc-title">Document</h2>
-          </div>
-          <div id="outline" class="outline empty">Load a Google Doc to inspect its paragraphs.</div>
-        </section>
-
-        <section class="panel chat-panel">
-          <div class="panel-header">
-            <h2>AI Chat</h2>
-            <label class="dry-run"><input id="dry-run" type="checkbox" /> Dry run</label>
-          </div>
-          <div id="chat-log" class="chat-log"></div>
-          <textarea id="message" rows="4" placeholder="Ask for writing help..."></textarea>
-          <button id="send">Generate Edits</button>
-        </section>
-      </div>
-
-      <section class="panel preview-panel">
-        <div class="panel-header">
-          <h2>Preview</h2>
-          <button id="apply" disabled>Apply</button>
+        <div class="modal-actions">
+          <button id="load-doc">Load Doc</button>
         </div>
-        <div id="preview" class="preview empty">AI edit proposals will appear here before anything is applied.</div>
-      </section>
-    </main>
+        <div class="picker-section">
+          <div class="section-header">
+            <h3>Recent</h3>
+            <button id="refresh-recent-docs" class="secondary">Refresh</button>
+          </div>
+          <div id="recent-docs" class="recent"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="connections-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="connections-modal-title">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2 id="connections-modal-title">Connections</h2>
+          <button class="icon-button" data-close-modal aria-label="Close" title="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+          </button>
+        </div>
+        <div class="connection-grid">
+          <a class="connection-tile" href="/auth/google">
+            <span class="connection-icon">G</span>
+            <span>Google</span>
+          </a>
+          <a class="connection-tile" href="/auth/google/switch">
+            <span class="connection-icon">G</span>
+            <span>Switch</span>
+          </a>
+          <button id="connect-copilot" class="connection-tile">
+            <span class="connection-icon">AI</span>
+            <span>Copilot</span>
+          </button>
+        </div>
+        <div id="copilot-panel" class="copilot-panel hidden">
+          <p class="muted">Use device login, or paste an OAuth token if you already have one.</p>
+          <div class="token-row">
+            <input id="copilot-token" type="password" placeholder="gho_ or ghu_ token" />
+            <button id="save-copilot-token">Save</button>
+            <button id="start-copilot-device" class="secondary">Device Login</button>
+          </div>
+          <div id="copilot-device" class="device-box hidden"></div>
+        </div>
+        <div class="advanced-settings">
+          <h3>Advanced</h3>
+          <label class="dry-run"><input id="dry-run" type="checkbox" /> Test apply without changing the doc</label>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="/app.js"></script>
   </body>
 </html>

@@ -1,10 +1,11 @@
 import { google, type docs_v1 } from "googleapis";
 import type { OAuth2Client } from "google-auth-library";
 import { config } from "./config.js";
-import type { PatchProposal, ReplaceTextEdit } from "./patchTypes.js";
+import type { PatchEdit, PatchProposal } from "./patchTypes.js";
 import { getDocument } from "./googleDocs.js";
 import { validatePatchProposal } from "./patchValidator.js";
 import { logPatch } from "./db.js";
+import type { NormalizedDocument } from "./patchTypes.js";
 
 export type ApplyPatchResult = {
   dryRun: boolean;
@@ -12,27 +13,234 @@ export type ApplyPatchResult = {
   replies?: docs_v1.Schema$Response[];
 };
 
-export function buildBatchUpdateRequests(edits: ReplaceTextEdit[]): docs_v1.Schema$Request[] {
+export function buildBatchUpdateRequests(
+  edits: PatchEdit[],
+  document?: NormalizedDocument
+): docs_v1.Schema$Request[] {
   // Google Docs indexes are absolute UTF-16 positions in the document. Deleting and
   // inserting from the end of the document backwards keeps earlier replacements from
-  // shifting the ranges of edits that have not run yet.
-  const sorted = [...edits].sort((a, b) => b.target.startIndex - a.target.startIndex);
-  return sorted.flatMap((edit) => [
-    {
-      deleteContentRange: {
-        range: {
-          startIndex: edit.target.startIndex,
-          endIndex: edit.target.endIndex
-        }
-      }
-    },
-    {
-      insertText: {
-        location: { index: edit.target.startIndex },
-        text: edit.replacementText
+  // shifting the ranges of edits that have not run yet. Style edits that target
+  // text inserted by the same patch are emitted immediately after that insert,
+  // because those ranges do not exist in the document before the insert request.
+  const requests: docs_v1.Schema$Request[] = [];
+  const emitted = new Set<PatchEdit>();
+  const sorted = [...edits].sort((a, b) => {
+    const byIndex = b.target.startIndex - a.target.startIndex;
+    if (byIndex !== 0) return byIndex;
+    return editRequestPriority(a) - editRequestPriority(b);
+  });
+
+  for (const edit of sorted) {
+    if (emitted.has(edit)) continue;
+    if (edit.type === "update_text_style" && findCoveringInsertion(edit, sorted)) continue;
+    requests.push(...buildRequestsForEdit(edit, document));
+    emitted.add(edit);
+
+    if (edit.type === "replace_text" && edit.replacementText.length > 0) {
+      const insertedRange = {
+        tabId: edit.target.tabId,
+        paragraphIndex: edit.target.paragraphIndex,
+        startIndex: edit.target.startIndex,
+        endIndex: edit.target.startIndex + edit.replacementText.length
+      };
+      const dependentStyles = sorted.filter((dependent) =>
+        !emitted.has(dependent) &&
+        dependent.type === "update_text_style" &&
+        rangeIsCoveredByRange(dependent.target, insertedRange)
+      );
+      requests.push(...buildInsertedTextGapResetRequests(insertedRange, dependentStyles, document));
+      for (const dependent of dependentStyles) {
+        requests.push(...buildRequestsForEdit(dependent, document));
+        emitted.add(dependent);
       }
     }
-  ]);
+  }
+
+  return requests;
+}
+
+function buildInsertedTextGapResetRequests(
+  insertedRange: { tabId?: string; paragraphIndex: number; startIndex: number; endIndex: number },
+  dependentStyles: PatchEdit[],
+  document?: NormalizedDocument
+): docs_v1.Schema$Request[] {
+  const requests: docs_v1.Schema$Request[] = [];
+  for (const field of ["bold", "italic", "underline"] as const) {
+    const trueRanges = dependentStyles
+      .filter((edit) => edit.type === "update_text_style" && edit.fields === field && edit.textStyle?.[field] === true)
+      .map((edit) => ({
+        startIndex: Math.max(insertedRange.startIndex, edit.target.startIndex),
+        endIndex: Math.min(insertedRange.endIndex, edit.target.endIndex)
+      }))
+      .filter((range) => range.startIndex < range.endIndex)
+      .sort((a, b) => a.startIndex - b.startIndex);
+
+    if (!trueRanges.length) continue;
+
+    let cursor = insertedRange.startIndex;
+    for (const range of mergeRanges(trueRanges)) {
+      if (cursor < range.startIndex) {
+        requests.push(...buildRequestsForEdit({
+          type: "update_text_style",
+          target: { ...insertedRange, startIndex: cursor, endIndex: range.startIndex },
+          textStyle: { [field]: false },
+          fields: field
+        }, document));
+      }
+      cursor = Math.max(cursor, range.endIndex);
+    }
+    if (cursor < insertedRange.endIndex) {
+      requests.push(...buildRequestsForEdit({
+        type: "update_text_style",
+        target: { ...insertedRange, startIndex: cursor, endIndex: insertedRange.endIndex },
+        textStyle: { [field]: false },
+        fields: field
+      }, document));
+    }
+  }
+  return requests;
+}
+
+function mergeRanges(ranges: Array<{ startIndex: number; endIndex: number }>) {
+  const merged: Array<{ startIndex: number; endIndex: number }> = [];
+  for (const range of ranges) {
+    const previous = merged.at(-1);
+    if (previous && range.startIndex <= previous.endIndex) {
+      previous.endIndex = Math.max(previous.endIndex, range.endIndex);
+    } else {
+      merged.push({ ...range });
+    }
+  }
+  return merged;
+}
+
+function findCoveringInsertion(edit: PatchEdit, edits: PatchEdit[]) {
+  if (edit.type !== "update_text_style") return undefined;
+  return edits.find((candidate) => {
+    if (candidate.type !== "replace_text" || candidate.replacementText.length === 0) return false;
+    return rangeIsCoveredByRange(edit.target, {
+      tabId: candidate.target.tabId,
+      paragraphIndex: candidate.target.paragraphIndex,
+      startIndex: candidate.target.startIndex,
+      endIndex: candidate.target.startIndex + candidate.replacementText.length
+    });
+  });
+}
+
+function buildRequestsForEdit(
+  edit: PatchEdit,
+  document?: NormalizedDocument
+): docs_v1.Schema$Request[] {
+    const tabId = edit.target.tabId ?? resolveTabIdForRange(document, edit.target);
+    const requests: docs_v1.Schema$Request[] = [];
+
+    if (edit.type === "update_paragraph_style") {
+      return [{
+        updateParagraphStyle: {
+          range: {
+            ...(tabId ? { tabId } : {}),
+            startIndex: edit.target.startIndex,
+            endIndex: edit.target.endIndex
+          },
+          paragraphStyle: edit.paragraphStyle,
+          fields: edit.fields
+        }
+      }];
+    }
+
+    if (edit.type === "update_text_style") {
+      return [{
+        updateTextStyle: {
+          range: {
+            ...(tabId ? { tabId } : {}),
+            startIndex: edit.target.startIndex,
+            endIndex: edit.target.endIndex
+          },
+          textStyle: edit.textStyle,
+          fields: edit.fields
+        }
+      }];
+    }
+
+    if (edit.type === "create_paragraph_bullets") {
+      return [{
+        createParagraphBullets: {
+          range: {
+            ...(tabId ? { tabId } : {}),
+            startIndex: edit.target.startIndex,
+            endIndex: edit.target.endIndex
+          },
+          bulletPreset: edit.bulletPreset
+        }
+      }];
+    }
+
+    if (edit.type === "delete_paragraph_bullets") {
+      return [{
+        deleteParagraphBullets: {
+          range: {
+            ...(tabId ? { tabId } : {}),
+            startIndex: edit.target.startIndex,
+            endIndex: edit.target.endIndex
+          }
+        }
+      }];
+    }
+
+    if (edit.target.endIndex > edit.target.startIndex) {
+      requests.push({
+        deleteContentRange: {
+          range: {
+            ...(tabId ? { tabId } : {}),
+            startIndex: edit.target.startIndex,
+            endIndex: edit.target.endIndex
+          }
+        }
+      });
+    }
+
+    if (edit.replacementText.length > 0) {
+      requests.push({
+        insertText: {
+          location: { ...(tabId ? { tabId } : {}), index: edit.target.startIndex },
+          text: edit.replacementText
+        }
+      });
+    }
+
+    return requests;
+}
+
+function rangeIsCoveredByRange(
+  target: { tabId?: string; paragraphIndex: number; startIndex: number; endIndex: number },
+  range: { tabId?: string; paragraphIndex: number; startIndex: number; endIndex: number }
+) {
+  return (
+    target.paragraphIndex === range.paragraphIndex &&
+    (target.tabId == null || range.tabId == null || target.tabId === range.tabId) &&
+    target.startIndex >= range.startIndex &&
+    target.endIndex <= range.endIndex
+  );
+}
+
+function editRequestPriority(edit: PatchEdit) {
+  if (edit.type === "replace_text") return 0;
+  if (edit.type === "update_text_style") return 1;
+  return 2;
+}
+
+function resolveTabIdForRange(
+  document: NormalizedDocument | undefined,
+  target: { paragraphIndex: number; startIndex: number; endIndex: number }
+) {
+  if (!document) return undefined;
+  const indexed = document.paragraphs[target.paragraphIndex];
+  if (indexed && target.startIndex >= indexed.startIndex && target.endIndex <= indexed.endIndex) {
+    return indexed.tabId;
+  }
+  return document.paragraphs.find((paragraph) =>
+    target.startIndex >= paragraph.startIndex && target.endIndex <= paragraph.endIndex
+  )?.tabId;
 }
 
 export async function applyPatch(
@@ -49,7 +257,7 @@ export async function applyPatch(
     throw new Error(validation.reason);
   }
 
-  const requests = buildBatchUpdateRequests(patch.edits);
+  const requests = buildBatchUpdateRequests(patch.edits, freshDocument);
   const dryRun = options?.dryRun ?? config.dryRun;
   if (dryRun || requests.length === 0) {
     return { dryRun: true, requests };

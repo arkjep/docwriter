@@ -155,11 +155,13 @@ app.post("/api/ai/propose", async (req, res, next) => {
   try {
     const document = req.body.document;
     const message = String(req.body.message ?? "");
+    const activeTabId = typeof req.body.activeTabId === "string" ? req.body.activeTabId : undefined;
+    const selectedText = typeof req.body.selectedText === "string" ? req.body.selectedText : undefined;
     const selectedParagraphIndex = req.body.selectedParagraphIndex;
     if (!document?.documentId) throw new Error("Load a document before chatting.");
     if (!message.trim()) throw new Error("Enter a writing request.");
 
-    const patch = await proposePatch({ document, message, selectedParagraphIndex });
+    const patch = await proposePatch({ document, message, activeTabId, selectedParagraphIndex, selectedText });
     const validation = validatePatchProposal(document, patch);
     if (!validation.ok) throw new Error(validation.reason);
     await logPatch({ documentId: document.documentId, kind: "proposal", patch });

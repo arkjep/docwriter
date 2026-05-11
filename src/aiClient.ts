@@ -4,7 +4,9 @@ import { callGitHubCopilotChat } from "./githubCopilot.js";
 
 type ChatInput = {
   document: NormalizedDocument;
+  activeTabId?: string;
   selectedParagraphIndex?: number;
+  selectedText?: string;
   message: string;
 };
 
@@ -12,18 +14,28 @@ export async function proposePatch(input: ChatInput): Promise<PatchProposal> {
   const system = [
     "You are an AI writing assistant for Google Docs.",
     "Return only strict JSON matching this TypeScript shape:",
-    "{ summary: string, edits: Array<{ type: 'replace_text', target: { paragraphIndex: number, startIndex: number, endIndex: number, currentText: string }, replacementText: string }> }.",
-    "Only propose edits that preserve the author's intent. Use Google Docs absolute indexes supplied in the paragraph metadata.",
+    "{ summary: string, edits: Array<{ type: 'replace_text', target: { tabId?: string, paragraphIndex: number, startIndex: number, endIndex: number, currentText: string }, replacementText: string }> }.",
+    "Only propose edits that preserve the author's intent. Use Google Docs absolute indexes and tabId values supplied in the paragraph metadata.",
     "If no direct edit is appropriate, return an empty edits array with a useful summary."
   ].join("\n");
 
   const user = JSON.stringify({
     userRequest: input.message,
+    activeTabId: input.activeTabId,
     selectedParagraphIndex: input.selectedParagraphIndex,
+    selectedText: input.selectedText,
     document: {
       title: input.document.title,
       fullText: input.document.fullText,
+      tabs: input.document.tabs.map((tab) => ({
+        tabId: tab.tabId,
+        title: tab.title,
+        depth: tab.depth,
+        paragraphIndexes: tab.paragraphs.map((paragraph) => paragraph.paragraphIndex)
+      })),
       paragraphs: input.document.paragraphs.map((paragraph) => ({
+        tabId: paragraph.tabId,
+        tabTitle: paragraph.tabTitle,
         paragraphIndex: paragraph.paragraphIndex,
         startIndex: paragraph.startIndex,
         endIndex: paragraph.endIndex,
