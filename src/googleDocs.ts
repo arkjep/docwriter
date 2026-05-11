@@ -2,6 +2,11 @@ import { google, type docs_v1 } from "googleapis";
 import type { OAuth2Client } from "google-auth-library";
 import type { NormalizedDocument, ParagraphModel, TabModel, TextRunModel } from "./patchTypes.js";
 
+const DEFAULT_NORMAL_TEXT_STYLE = {
+  fontSize: { magnitude: 11, unit: "PT" },
+  weightedFontFamily: { fontFamily: "Arial" }
+};
+
 export function extractGoogleDocId(input: string) {
   const trimmed = normalizePastedDocInput(input);
 
@@ -90,7 +95,8 @@ export function normalizeDocument(
   fallbackDocumentId = ""
 ): NormalizedDocument {
   const listMetadata = buildListMetadata(doc);
-  const tabs = normalizeTabs(doc, listMetadata);
+  const namedTextStyles = buildNamedTextStyles(doc);
+  const tabs = normalizeTabs(doc, listMetadata, namedTextStyles);
   const paragraphs: ParagraphModel[] = [];
   for (const tab of tabs) paragraphs.push(...tab.paragraphs);
 
@@ -103,7 +109,11 @@ export function normalizeDocument(
   };
 }
 
-function normalizeTabs(doc: docs_v1.Schema$Document, listMetadata: Map<string, Map<number, ReturnType<typeof getListLevelMetadata>>>): TabModel[] {
+function normalizeTabs(
+  doc: docs_v1.Schema$Document,
+  listMetadata: Map<string, Map<number, ReturnType<typeof getListLevelMetadata>>>,
+  namedTextStyles: Map<string, Record<string, unknown>>
+): TabModel[] {
   const rawTabs = (doc as unknown as { tabs?: unknown[] }).tabs ?? [];
   if (rawTabs.length > 0) {
     let paragraphIndex = 0;
@@ -116,11 +126,16 @@ function normalizeTabs(doc: docs_v1.Schema$Document, listMetadata: Map<string, M
       };
       const tabId = typedTab.tabProperties?.tabId ?? `tab-${flattened.length}`;
       const title = typedTab.tabProperties?.title ?? `Tab ${flattened.length + 1}`;
+      const tabNamedTextStyles = mergeNamedTextStyleMaps(
+        namedTextStyles,
+        buildNamedTextStyles(typedTab.documentTab as unknown as { namedStyles?: docs_v1.Schema$NamedStyles })
+      );
       const paragraphs = normalizeParagraphs(
         typedTab.documentTab?.body?.content ?? [],
         tabId,
         title,
         listMetadata,
+        tabNamedTextStyles,
         () => paragraphIndex++
       );
       flattened.push({ tabId, title, depth, paragraphs });
@@ -136,7 +151,7 @@ function normalizeTabs(doc: docs_v1.Schema$Document, listMetadata: Map<string, M
     tabId: "",
     title: "Main",
     depth: 0,
-    paragraphs: normalizeParagraphs(doc.body?.content ?? [], "", "Main", listMetadata, () => paragraphIndex++)
+    paragraphs: normalizeParagraphs(doc.body?.content ?? [], "", "Main", listMetadata, namedTextStyles, () => paragraphIndex++)
   }];
 }
 
@@ -145,6 +160,7 @@ function normalizeParagraphs(
   tabId: string,
   tabTitle: string,
   listMetadata: Map<string, Map<number, ReturnType<typeof getListLevelMetadata>>>,
+  namedTextStyles: Map<string, Record<string, unknown>>,
   nextParagraphIndex: () => number
 ) {
   const paragraphs: ParagraphModel[] = [];
@@ -154,6 +170,9 @@ function normalizeParagraphs(
 
     const textRuns: TextRunModel[] = [];
     let text = "";
+    const paragraphStyle = paragraph.paragraphStyle as Record<string, unknown> | undefined;
+    const namedStyleType = typeof paragraphStyle?.namedStyleType === "string" ? paragraphStyle.namedStyleType : "NORMAL_TEXT";
+    const inheritedTextStyle = namedTextStyles.get(namedStyleType) ?? namedTextStyles.get("NORMAL_TEXT") ?? {};
 
     for (const paragraphElement of paragraph.elements ?? []) {
       const run = paragraphElement.textRun;
@@ -165,7 +184,7 @@ function normalizeParagraphs(
         startIndex,
         endIndex,
         text: run.content,
-        style: run.textStyle as Record<string, unknown> | undefined
+        style: mergeTextStyles(inheritedTextStyle, run.textStyle as Record<string, unknown> | undefined)
       });
       text += run.content;
     }
@@ -178,11 +197,40 @@ function normalizeParagraphs(
       endIndex: element.endIndex ?? textRuns.at(-1)?.endIndex ?? 0,
       text,
       textRuns,
-      style: paragraph.paragraphStyle as Record<string, unknown> | undefined,
+      style: paragraphStyle,
       bullet: normalizeBullet(paragraph, listMetadata)
     });
   }
   return paragraphs;
+}
+
+function buildNamedTextStyles(doc: { namedStyles?: docs_v1.Schema$NamedStyles }) {
+  const namedTextStyles = new Map<string, Record<string, unknown>>();
+  namedTextStyles.set("NORMAL_TEXT", { ...DEFAULT_NORMAL_TEXT_STYLE });
+  for (const style of doc.namedStyles?.styles ?? []) {
+    if (style.namedStyleType && style.textStyle) {
+      const baseStyle = style.namedStyleType === "NORMAL_TEXT"
+        ? DEFAULT_NORMAL_TEXT_STYLE
+        : namedTextStyles.get("NORMAL_TEXT") ?? DEFAULT_NORMAL_TEXT_STYLE;
+      namedTextStyles.set(style.namedStyleType, mergeTextStyles(baseStyle, style.textStyle as Record<string, unknown>));
+    }
+  }
+  return namedTextStyles;
+}
+
+function mergeNamedTextStyleMaps(
+  base: Map<string, Record<string, unknown>>,
+  override: Map<string, Record<string, unknown>>
+) {
+  const merged = new Map(base);
+  for (const [name, style] of override) {
+    merged.set(name, mergeTextStyles(merged.get(name), style));
+  }
+  return merged;
+}
+
+function mergeTextStyles(...styles: Array<Record<string, unknown> | undefined>) {
+  return Object.assign({}, ...styles.filter(Boolean));
 }
 
 function normalizeBullet(

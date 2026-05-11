@@ -20,6 +20,8 @@ const pendingInlineStyleStart = {
   italic: null,
   underline: null
 };
+const pendingControlTextStyle = {};
+const pendingControlTextStyleStart = {};
 let lastHandledTextStyleShortcut = null;
 const PAGE_THEME_STORAGE_KEY = "docs-assistant-page-theme";
 
@@ -70,7 +72,7 @@ document.querySelectorAll("[data-command]").forEach((button) => {
 document.querySelectorAll("[data-paragraph-action]").forEach((button) => {
   button.addEventListener("click", () => queueParagraphFormatAction(button.dataset.paragraphAction));
 });
-fontFamilyEl.addEventListener("change", () => runFormatCommand("fontName", fontFamilyEl.value));
+fontFamilyEl.addEventListener("change", () => applyFontFamily(fontFamilyEl.value));
 fontSizeEl.addEventListener("change", () => applyFontSize(fontSizeEl.value));
 document.querySelector("#connect-copilot").addEventListener("click", () => copilotPanelEl.classList.remove("hidden"));
 document.querySelector("#save-copilot-token").addEventListener("click", saveCopilotToken);
@@ -319,10 +321,11 @@ function renderIndexedParagraphContent(paragraph) {
   return runs.map((run) => {
     const text = stripParagraphBreak(run.text);
     if (!text) return `<span class="doc-char empty-paragraph" ${spanIndexData(paragraph, run.startIndex, run.startIndex)}><br></span>`;
-    const style = textRunStyle(run.style);
     return [...text].map((char, offset) => {
       const start = run.startIndex + offset;
-      return `<span class="doc-char" ${spanIndexData(paragraph, start, start + 1)}${style ? ` style="${style}"` : ""}>${escapeHtml(char)}</span>`;
+      const style = originalCharStyle(paragraph, start, run.style);
+      const draftClass = hasDraftTextStyleAtIndex(start, paragraph) ? " style-suggested" : "";
+      return `<span class="doc-char${draftClass}" ${spanIndexData(paragraph, start, start + 1)}${style ? ` style="${style}"` : ""}>${escapeHtml(char)}</span>`;
     }).join("");
   }).join("");
 }
@@ -334,12 +337,13 @@ function renderIndexedParagraphSlice(paragraph, sliceStart, sliceEnd) {
   return runs.map((run) => {
     const text = stripParagraphBreak(run.text);
     if (!text) return "";
-    const style = textRunStyle(run.style);
     return [...text].map((char, offset) => {
       const start = run.startIndex + offset;
       const paragraphOffset = start - paragraph.startIndex;
       if (paragraphOffset < sliceStart || paragraphOffset >= sliceEnd) return "";
-      return `<span class="doc-char" ${spanIndexData(paragraph, start, start + 1)}${style ? ` style="${style}"` : ""}>${escapeHtml(char)}</span>`;
+      const style = originalCharStyle(paragraph, start, run.style);
+      const draftClass = hasDraftTextStyleAtIndex(start, paragraph) ? " style-suggested" : "";
+      return `<span class="doc-char${draftClass}" ${spanIndexData(paragraph, start, start + 1)}${style ? ` style="${style}"` : ""}>${escapeHtml(char)}</span>`;
     }).join("");
   }).join("");
 }
@@ -361,15 +365,40 @@ function renderParagraphContent(paragraph, text) {
 }
 
 function textRunStyle(style = {}) {
-  const declarations = [];
-  if (style.bold) declarations.push("font-weight:700");
-  if (style.italic) declarations.push("font-style:italic");
-  if (style.underline) declarations.push("text-decoration:underline");
-  if (style.fontSize?.magnitude) declarations.push(`font-size:${Number(style.fontSize.magnitude)}pt`);
-  if (style.weightedFontFamily?.fontFamily) declarations.push(`font-family:${cssString(style.weightedFontFamily.fontFamily)}`);
+  const declarations = textStyleCssDeclarations(style);
   const color = style.foregroundColor?.color?.rgbColor;
   if (color) declarations.push(`color:${rgbColor(color)}`);
   return declarations.join(";");
+}
+
+function textStyleCssDeclarations(style = {}, options = {}) {
+  const declarations = [];
+  if (style.bold === true || (options.includeFalse && style.bold === false)) {
+    declarations.push(`font-weight:${style.bold ? "700" : "400"}`);
+  }
+  if (style.italic === true || (options.includeFalse && style.italic === false)) {
+    declarations.push(`font-style:${style.italic ? "italic" : "normal"}`);
+  }
+  if (style.underline === true || (options.includeFalse && style.underline === false)) {
+    declarations.push(`text-decoration:${style.underline ? "underline" : "none"}`);
+  }
+  if (style.fontSize?.magnitude) declarations.push(`font-size:${Number(style.fontSize.magnitude)}pt`);
+  if (style.weightedFontFamily?.fontFamily) declarations.push(`font-family:${cssString(style.weightedFontFamily.fontFamily)}`);
+  return declarations;
+}
+
+function applyDomTextStyle(element, style = {}, options = {}) {
+  if (style.bold === true || (options.includeFalse && style.bold === false)) {
+    element.style.fontWeight = style.bold ? "700" : "400";
+  }
+  if (style.italic === true || (options.includeFalse && style.italic === false)) {
+    element.style.fontStyle = style.italic ? "italic" : "normal";
+  }
+  if (style.underline === true || (options.includeFalse && style.underline === false)) {
+    element.style.textDecoration = style.underline ? "underline" : "none";
+  }
+  if (style.fontSize?.magnitude) element.style.fontSize = `${Number(style.fontSize.magnitude)}pt`;
+  if (style.weightedFontFamily?.fontFamily) element.style.fontFamily = style.weightedFontFamily.fontFamily;
 }
 
 function paragraphRowStyle(paragraph) {
@@ -503,6 +532,8 @@ function syncDraftEditsFromDom(event) {
   if (line) syncLineDraftEdit(line);
   renderDraftBar();
   syncDraftPreview();
+  if (line) repaintTextStyleDraftsForLine(line);
+  updateToolbarState();
 }
 
 function findLineFromEventOrSelection(event) {
@@ -628,9 +659,10 @@ function updateInlineDiff(line, before, after) {
   const content = line.querySelector(".doc-line-content");
   const caretOffset = content ? getCaretTextOffset(content) : null;
   const paragraph = currentDocument?.paragraphs[Number(line.dataset.paragraphIndex)];
+  const visualStyleByIndex = paragraph && content ? captureRenderedStyleByIndex(content, paragraph) : new Map();
   if (content) {
     content.innerHTML = paragraph
-      ? renderEditorInlineDiff(parts, paragraph)
+      ? renderEditorInlineDiff(parts, paragraph, visualStyleByIndex)
       : renderEditorInlineDiff(parts);
     placeCaretAtTextOffset(content, Math.min(caretOffset ?? after.length, after.length));
   }
@@ -643,9 +675,35 @@ function clearInlineDiff(line, resetText = null) {
   line?.querySelector(".inline-diff")?.remove();
   line?.querySelector(".format-indicator")?.remove();
   line?.classList.remove("has-diff", "has-insert", "has-delete", "has-format-change");
+  const paragraph = currentDocument?.paragraphs[Number(line?.dataset.paragraphIndex)];
   if (resetText != null) {
     const content = line?.querySelector(".doc-line-content");
-    if (content) content.textContent = resetText;
+    if (content && paragraph && resetText === editableParagraphText(paragraph)) {
+      content.innerHTML = renderIndexedParagraphContent(paragraph);
+    } else if (content) {
+      content.textContent = resetText;
+    }
+  }
+  if (line && paragraphHasTextStyleDraft(paragraph)) {
+    line.classList.add("has-diff", "has-format-change");
+  }
+}
+
+function repaintTextStyleDraftsForLine(line) {
+  const paragraph = currentDocument?.paragraphs[Number(line?.dataset.paragraphIndex)];
+  if (!line || !paragraph) return;
+  for (const edit of activeTextStyleDraftEdits()) {
+    if (edit.target.paragraphIndex !== paragraph.paragraphIndex) continue;
+    if ((edit.target.tabId ?? "") !== (paragraph.tabId ?? "")) continue;
+    paintTextStyleValueDraft({
+      startIndex: edit.target.startIndex,
+      endIndex: edit.target.endIndex,
+      segments: [{
+        paragraph,
+        startIndex: Math.max(edit.target.startIndex, paragraph.startIndex),
+        endIndex: Math.min(edit.target.endIndex, paragraph.endIndex)
+      }]
+    }, edit.textStyle ?? {}, { includeFalse: true });
   }
 }
 
@@ -724,7 +782,7 @@ function renderTokenDiff(before, after, options = {}) {
   return html || `<span class="diff-equal">No textual change</span>`;
 }
 
-function renderEditorInlineDiff(parts, paragraph = null) {
+function renderEditorInlineDiff(parts, paragraph = null, visualStyleByIndex = new Map()) {
   let originalOffset = 0;
   return parts
     .filter((part) => part.type !== "delete")
@@ -740,7 +798,7 @@ function renderEditorInlineDiff(parts, paragraph = null) {
           return `<span class="doc-insert"${data}${style ? ` style="${style}"` : ""}>${escapeHtml(char)}</span>`;
         }).join("");
       }
-      const html = [...part.value].map((char) => renderOriginalStyledChar(paragraph, originalOffset++, char)).join("");
+      const html = [...part.value].map((char) => renderOriginalStyledChar(paragraph, originalOffset++, char, visualStyleByIndex)).join("");
       return html;
     })
     .join("");
@@ -748,14 +806,16 @@ function renderEditorInlineDiff(parts, paragraph = null) {
 
 function draftTextStyleCssAtIndex(index, paragraph = null) {
   const declarations = [];
-  for (const edit of formatDraftEdits.values()) {
-    if (edit.type !== "update_text_style") continue;
+  for (const edit of activeTextStyleDraftEdits()) {
     if (paragraph && edit.target.paragraphIndex !== paragraph.paragraphIndex) continue;
     if (paragraph && (edit.target.tabId ?? "") !== (paragraph.tabId ?? "")) continue;
     if (index < edit.target.startIndex || index >= edit.target.endIndex) continue;
     if (edit.fields === "bold") declarations.push(`font-weight:${edit.textStyle?.bold ? "700" : "400"}`);
     if (edit.fields === "italic") declarations.push(`font-style:${edit.textStyle?.italic ? "italic" : "normal"}`);
     if (edit.fields === "underline") declarations.push(`text-decoration:${edit.textStyle?.underline ? "underline" : "none"}`);
+    if (edit.fields === "fontSize" || edit.fields === "weightedFontFamily") {
+      declarations.push(...textStyleCssDeclarations(edit.textStyle ?? {}, { includeFalse: true }));
+    }
   }
   return declarations.join(";");
 }
@@ -765,15 +825,70 @@ function pendingInlineStyleCss() {
   if (pendingInlineStyle.bold != null) declarations.push(`font-weight:${pendingInlineStyle.bold ? "700" : "400"}`);
   if (pendingInlineStyle.italic != null) declarations.push(`font-style:${pendingInlineStyle.italic ? "italic" : "normal"}`);
   if (pendingInlineStyle.underline != null) declarations.push(`text-decoration:${pendingInlineStyle.underline ? "underline" : "none"}`);
+  for (const style of Object.values(pendingControlTextStyle)) {
+    declarations.push(...textStyleCssDeclarations(style, { includeFalse: true }));
+  }
   return declarations.join(";");
 }
 
-function renderOriginalStyledChar(paragraph, offset, char) {
+function renderOriginalStyledChar(paragraph, offset, char, visualStyleByIndex = new Map()) {
   if (!paragraph) return escapeHtml(char);
   const index = paragraph.startIndex + offset;
   const run = paragraph.textRuns?.find((candidate) => index >= candidate.startIndex && index < candidate.endIndex);
-  const style = textRunStyle(run?.style ?? {});
-  return `<span class="doc-char" ${spanIndexData(paragraph, index, index + 1)}${style ? ` style="${style}"` : ""}>${escapeHtml(char)}</span>`;
+  const style = visualStyleByIndex.get(index) ?? originalCharStyle(paragraph, index, run?.style ?? {});
+  const draftClass = hasDraftTextStyleAtIndex(index, paragraph) ? " style-suggested" : "";
+  return `<span class="doc-char${draftClass}" ${spanIndexData(paragraph, index, index + 1)}${style ? ` style="${style}"` : ""}>${escapeHtml(char)}</span>`;
+}
+
+function captureRenderedStyleByIndex(content, paragraph) {
+  const styles = new Map();
+  for (const char of content.querySelectorAll(".doc-char[data-start-index], .doc-insert[data-start-index]")) {
+    if (Number(char.dataset.paragraphIndex) !== paragraph.paragraphIndex) continue;
+    if ((char.dataset.tabId ?? "") !== (paragraph.tabId ?? "")) continue;
+    const index = Number(char.dataset.startIndex);
+    if (!Number.isFinite(index)) continue;
+    const inlineStyle = char.getAttribute("style");
+    if (inlineStyle) styles.set(index, inlineStyle);
+  }
+  return styles;
+}
+
+function originalCharStyle(paragraph, index, runStyle = {}) {
+  return [textRunStyle(runStyle), draftTextStyleCssAtIndex(index, paragraph)].filter(Boolean).join(";");
+}
+
+function hasDraftTextStyleAtIndex(index, paragraph = null) {
+  for (const edit of activeTextStyleDraftEdits()) {
+    if (paragraph && edit.target.paragraphIndex !== paragraph.paragraphIndex) continue;
+    if (paragraph && (edit.target.tabId ?? "") !== (paragraph.tabId ?? "")) continue;
+    if (index >= edit.target.startIndex && index < edit.target.endIndex) return true;
+  }
+  return false;
+}
+
+function paragraphHasTextStyleDraft(paragraph) {
+  if (!paragraph) return false;
+  for (const edit of activeTextStyleDraftEdits()) {
+    if (edit.target.paragraphIndex !== paragraph.paragraphIndex) continue;
+    if ((edit.target.tabId ?? "") !== (paragraph.tabId ?? "")) continue;
+    return true;
+  }
+  return false;
+}
+
+function activeTextStyleDraftEdits() {
+  const edits = [];
+  const seen = new Set();
+  const add = (edit) => {
+    if (edit?.type !== "update_text_style") return;
+    const key = `${edit.fields}:${edit.target.tabId ?? ""}:${edit.target.paragraphIndex}:${edit.target.startIndex}:${edit.target.endIndex}:${JSON.stringify(edit.textStyle ?? {})}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    edits.push(edit);
+  };
+  for (const edit of formatDraftEdits.values()) add(edit);
+  for (const edit of currentPatch?.edits ?? []) add(edit);
+  return edits;
 }
 
 function visibleWhitespace(value) {
@@ -889,6 +1004,47 @@ function queueSelectedTextStyle(field, options = {}) {
   return true;
 }
 
+function queueTextStyleChange(textStyle, fields, options = {}) {
+  const range = getSelectionIndexRangeForStyle({ allowSavedSelection: Boolean(options.allowSavedSelection) });
+  if (!range) return false;
+
+  if (range.startIndex === range.endIndex) {
+    pendingControlTextStyle[fields] = textStyle;
+    pendingControlTextStyleStart[fields] = {
+      tabId: range.paragraph?.tabId,
+      paragraphIndex: range.paragraph?.paragraphIndex,
+      startIndex: range.startIndex
+    };
+    updateToolbarState();
+    return true;
+  }
+
+  delete pendingControlTextStyle[fields];
+  delete pendingControlTextStyleStart[fields];
+  for (const segment of selectionSegments(range)) {
+    const paragraph = segment.paragraph;
+    const startIndex = segment.startIndex;
+    const endIndex = segment.endIndex;
+    if (startIndex >= endIndex) continue;
+    const key = `text-style-${fields}-${paragraph.tabId}-${startIndex}-${endIndex}`;
+    formatDraftEdits.set(key, {
+      type: "update_text_style",
+      target: {
+        tabId: paragraph.tabId,
+        paragraphIndex: paragraph.paragraphIndex,
+        startIndex,
+        endIndex
+      },
+      textStyle,
+      fields
+    });
+  }
+  paintTextStyleValueDraft(range, textStyle);
+  syncDraftPreview();
+  updateToolbarState();
+  return true;
+}
+
 function selectionSegments(range) {
   if (range.segments?.length) return range.segments;
   return paragraphsIntersectingRange(range).map((paragraph) => ({
@@ -918,6 +1074,10 @@ function resetPendingInlineStyles() {
   for (const field of Object.keys(pendingInlineStyle)) {
     pendingInlineStyle[field] = null;
     pendingInlineStyleStart[field] = null;
+  }
+  for (const field of Object.keys(pendingControlTextStyle)) {
+    delete pendingControlTextStyle[field];
+    delete pendingControlTextStyleStart[field];
   }
 }
 
@@ -986,12 +1146,14 @@ function effectiveTextStyleAtIndex(field, index, paragraph = null) {
 }
 
 function paintTextStyleDraft(range, field, enable) {
+  paintTextStyleValueDraft(range, { [field]: enable }, { includeFalse: true });
+}
+
+function paintTextStyleValueDraft(range, textStyle, options = {}) {
   const segments = selectionSegments(range);
   for (const char of indexedTextSpans()) {
     if (segments.some((segment) => spanIsInsideSegment(char, segment))) {
-      if (field === "bold") char.style.fontWeight = enable ? "700" : "400";
-      if (field === "italic") char.style.fontStyle = enable ? "italic" : "normal";
-      if (field === "underline") char.style.textDecoration = enable ? "underline" : "none";
+      applyDomTextStyle(char, textStyle, { includeFalse: Boolean(options.includeFalse) });
       char.classList.add("style-suggested");
     }
   }
@@ -1010,15 +1172,20 @@ function spanIsInsideSegment(span, segment) {
   );
 }
 
-function applyFontSize(size) {
-  outlineEl.focus();
-  document.execCommand("fontSize", false, "7");
-  for (const font of outlineEl.querySelectorAll("font[size='7']")) {
-    font.removeAttribute("size");
-    font.style.fontSize = `${Number(size)}pt`;
+function applyFontFamily(fontFamily) {
+  const family = String(fontFamily ?? "").trim();
+  if (!family) return;
+  if (!queueTextStyleChange({ weightedFontFamily: { fontFamily: family } }, "weightedFontFamily", { allowSavedSelection: true })) {
+    throwToast("Select text or place the caret in the document first.");
   }
-  syncDraftEditsFromDom();
-  updateToolbarState();
+}
+
+function applyFontSize(size) {
+  const magnitude = Number(size);
+  if (!Number.isFinite(magnitude) || magnitude <= 0) return;
+  if (!queueTextStyleChange({ fontSize: { magnitude, unit: "PT" } }, "fontSize", { allowSavedSelection: true })) {
+    throwToast("Select text or place the caret in the document first.");
+  }
 }
 
 function queueParagraphFormatAction(action) {
@@ -1285,7 +1452,8 @@ function removeDraftTextEditForParagraph(paragraph) {
 function queuePendingInlineStyleForReplacement(paragraph, replacement) {
   if (!replacement.replacementText) return;
   const fields = Object.entries(pendingInlineStyle).filter(([, value]) => value === true);
-  if (!fields.length) return;
+  const controlFields = Object.entries(pendingControlTextStyle).filter(([, style]) => style);
+  if (!fields.length && !controlFields.length) return;
   removePendingInlineStyleDraftsForParagraph(paragraph);
   for (const [field, value] of fields) {
     const styleStart = pendingInlineStyleStart[field];
@@ -1306,6 +1474,28 @@ function queuePendingInlineStyleForReplacement(paragraph, replacement) {
         endIndex
       },
       textStyle: { [field]: value },
+      fields: field
+    });
+  }
+  for (const [field, textStyle] of controlFields) {
+    const styleStart = pendingControlTextStyleStart[field];
+    const replacementStart = replacement.startIndex;
+    const replacementEnd = replacement.startIndex + replacement.replacementText.length;
+    const startIndex = styleStartBelongsToParagraph(styleStart, paragraph)
+      ? Math.max(replacementStart, styleStart.startIndex)
+      : replacementStart;
+    const endIndex = replacementEnd;
+    if (startIndex >= endIndex) continue;
+    const key = `typing-style-${field}-${paragraph.tabId}-${startIndex}-${endIndex}`;
+    formatDraftEdits.set(key, {
+      type: "update_text_style",
+      target: {
+        tabId: paragraph.tabId,
+        paragraphIndex: paragraph.paragraphIndex,
+        startIndex,
+        endIndex
+      },
+      textStyle,
       fields: field
     });
   }
@@ -1567,6 +1757,8 @@ function syncDraftPreview() {
 window.__docwriterDebug = () => ({
   pendingInlineStyle: { ...pendingInlineStyle },
   pendingInlineStyleStart: { ...pendingInlineStyleStart },
+  pendingControlTextStyle: { ...pendingControlTextStyle },
+  pendingControlTextStyleStart: { ...pendingControlTextStyleStart },
   selectedRange,
   selectedText,
   indexDraftEdits: [...indexDraftEdits.values()].map((draft) => ({
@@ -1769,10 +1961,11 @@ function paintIndexSuggestions() {
 }
 
 function updateToolbarState() {
+  const toolbarRange = getSelectionIndexRange() ?? savedTextSelectionRange;
   for (const command of ["bold", "italic", "underline"]) {
     const button = document.querySelector(`[data-command="${command}"]`);
     if (!button) continue;
-    const range = getSelectionIndexRange();
+    const range = toolbarRange;
     const active = range && range.startIndex !== range.endIndex
       ? selectionHasUniformTextStyle(command, true, range)
       : isInlineStyleActiveAtCaret(command, range?.startIndex, range?.paragraph);
@@ -1794,26 +1987,30 @@ function updateToolbarState() {
     document.querySelector('[data-paragraph-action="number"]')?.classList.toggle("active", isNumberedParagraph(paragraph));
     const style = active.style;
     const domStyle = getActiveDomTextStyle();
-    if (style?.weightedFontFamily?.fontFamily) {
+    const pendingFontFamily = pendingControlTextStyle.weightedFontFamily?.weightedFontFamily?.fontFamily;
+    const pendingFontSize = pendingControlTextStyle.fontSize?.fontSize?.magnitude;
+    if (pendingFontFamily) {
+      setFontFamilyControl(pendingFontFamily);
+    } else if (style?.weightedFontFamily?.fontFamily) {
       fontFamilyEl.value = style.weightedFontFamily.fontFamily;
     } else if (domStyle?.fontFamily) {
       setFontFamilyControl(domStyle.fontFamily);
     }
-    const fontSize = style?.fontSize?.magnitude ?? domStyle?.fontSize;
+    const fontSize = pendingFontSize ?? style?.fontSize?.magnitude ?? domStyle?.fontSize;
     if (fontSize) setFontSizeControl(fontSize);
   }
 }
 
 function getActiveParagraphAndStyle() {
   const selectedLineParagraph = findParagraphFromSelectionLine();
-  const range = getSelectionIndexRange();
+  const range = getSelectionIndexRange() ?? savedTextSelectionRange;
   const paragraph = selectedLineParagraph ?? (range
     ? findParagraphForIndex(range.startIndex)
     : selectedParagraphIndex != null ? currentDocument?.paragraphs[selectedParagraphIndex] : findParagraphFromSelection());
   if (!paragraph) return null;
   return {
     paragraph,
-    style: findTextRunStyleAtIndex(paragraph, range?.startIndex)
+    style: findEffectiveTextRunStyleAtIndex(paragraph, range?.startIndex)
   };
 }
 
@@ -1852,6 +2049,23 @@ function findTextRunStyleAtIndex(paragraph, index) {
     return index >= runStart && stripParagraphBreak(run.text);
   });
   return previousRun?.style ?? runs.find((run) => stripParagraphBreak(run.text))?.style;
+}
+
+function findEffectiveTextRunStyleAtIndex(paragraph, index) {
+  const textEnd = paragraph.startIndex + editableParagraphText(paragraph).length;
+  const styleIndex = index == null
+    ? paragraph.startIndex
+    : Math.max(paragraph.startIndex, Math.min(index, Math.max(paragraph.startIndex, textEnd - 1)));
+  const style = { ...(findTextRunStyleAtIndex(paragraph, styleIndex) ?? {}) };
+  for (const edit of formatDraftEdits.values()) {
+    if (edit.type !== "update_text_style") continue;
+    if (edit.target.paragraphIndex !== paragraph.paragraphIndex) continue;
+    if ((edit.target.tabId ?? "") !== (paragraph.tabId ?? "")) continue;
+    if (styleIndex >= edit.target.startIndex && styleIndex < edit.target.endIndex) {
+      Object.assign(style, edit.textStyle ?? {});
+    }
+  }
+  return style;
 }
 
 function setFontSizeControl(size) {
@@ -2040,6 +2254,8 @@ function formatTextStyleChange(edit) {
   if (edit.fields === "bold") return edit.textStyle?.bold ? "Make selection bold" : "Remove bold from selection";
   if (edit.fields === "italic") return edit.textStyle?.italic ? "Italicize selection" : "Remove italic from selection";
   if (edit.fields === "underline") return edit.textStyle?.underline ? "Underline selection" : "Remove underline from selection";
+  if (edit.fields === "fontSize") return `Set font size to ${Number(edit.textStyle?.fontSize?.magnitude)}pt`;
+  if (edit.fields === "weightedFontFamily") return `Set font to ${edit.textStyle?.weightedFontFamily?.fontFamily ?? "selected font"}`;
   return `Update text style: ${edit.fields}`;
 }
 
@@ -2083,11 +2299,10 @@ function repaintDraftVisualsFromPatch() {
     if (edit.type === "replace_text") {
       updateInlineDiff(line, edit.target.currentText, edit.replacementText);
     } else if (edit.type === "update_text_style") {
-      const field = edit.fields;
-      paintTextStyleDraft(
+      paintTextStyleValueDraft(
         { startIndex: edit.target.startIndex, endIndex: edit.target.endIndex },
-        field,
-        Boolean(edit.textStyle?.[field])
+        edit.textStyle ?? {},
+        { includeFalse: true }
       );
     } else {
       setFormatIndicator(line, edit.type === "update_paragraph_style" ? formatStyleChange(edit) : edit.type === "create_paragraph_bullets" ? "List formatting" : "Remove list");
@@ -2200,6 +2415,8 @@ function restoreCharStyleFromRuns(char, paragraph, index) {
   char.style.fontWeight = style.bold ? "700" : "";
   char.style.fontStyle = style.italic ? "italic" : "";
   char.style.textDecoration = style.underline ? "underline" : "";
+  char.style.fontSize = style.fontSize?.magnitude ? `${Number(style.fontSize.magnitude)}pt` : "";
+  char.style.fontFamily = style.weightedFontFamily?.fontFamily ?? "";
 }
 
 async function applySingleEdit(index) {
