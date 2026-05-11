@@ -23,6 +23,9 @@
           <span id="doc-title">No document loaded</span>
         </div>
         <div class="iconbar">
+          <button id="refresh-doc" class="icon-button" aria-label="Refresh document" title="Refresh document" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.4 6.4L3 16"/><path d="M3 21v-5h5"/><path d="M3 12A9 9 0 0 1 18.4 5.6L21 8"/><path d="M21 3v5h-5"/></svg>
+          </button>
           <button id="open-doc-modal" class="icon-button" aria-label="Open document" title="Open document">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H15l5 5v12.5a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 19.5v-15Z"/><path d="M14 2v6h6"/><path d="M8 12h8M8 16h8"/></svg>
           </button>
@@ -74,7 +77,14 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.5A8.5 8.5 0 0 1 8.5 4a7 7 0 1 0 11.5 11.5Z"/></svg>
             </button>
           </div>
-          <div id="outline" class="outline empty">Open a Google Doc to inspect its paragraphs.</div>
+          <section id="main-doc-browser" class="doc-browser">
+            <div class="doc-browser-header">
+              <h2>Recent Google Docs</h2>
+              <button id="refresh-main-recent-docs" class="secondary">Refresh</button>
+            </div>
+            <div id="main-recent-docs" class="recent"></div>
+          </section>
+          <div id="outline" class="outline empty hidden">Open a Google Doc to inspect its paragraphs.</div>
         </section>
 
         <aside class="assistant-panel">

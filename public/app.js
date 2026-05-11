@@ -34,12 +34,15 @@ const tabStripEl = document.querySelector("#tab-strip");
 const formatToolbarEl = document.querySelector("#format-toolbar");
 const fontFamilyEl = document.querySelector("#font-family");
 const fontSizeEl = document.querySelector("#font-size");
+const mainDocBrowserEl = document.querySelector("#main-doc-browser");
+const mainRecentDocsEl = document.querySelector("#main-recent-docs");
 const recentDocsEl = document.querySelector("#recent-docs");
 const chatLogEl = document.querySelector("#chat-log");
 const messageEl = document.querySelector("#message");
 const sendButton = document.querySelector("#send");
 const previewEl = document.querySelector("#preview");
 const applyButton = document.querySelector("#apply");
+const refreshDocButton = document.querySelector("#refresh-doc");
 const dryRunEl = document.querySelector("#dry-run");
 const copilotPanelEl = document.querySelector("#copilot-panel");
 const copilotDeviceEl = document.querySelector("#copilot-device");
@@ -53,7 +56,9 @@ const connectionsModalEl = document.querySelector("#connections-modal");
 document.querySelector("#load-doc").addEventListener("click", () => loadDocument());
 docInput.addEventListener("input", previewParsedDocId);
 document.querySelector("#open-doc-modal").addEventListener("click", openDocumentPicker);
-document.querySelector("#refresh-recent-docs").addEventListener("click", listRecentDocs);
+refreshDocButton.addEventListener("click", refreshDocumentFromGoogle);
+document.querySelector("#refresh-main-recent-docs").addEventListener("click", () => listRecentDocs(mainRecentDocsEl));
+document.querySelector("#refresh-recent-docs").addEventListener("click", () => listRecentDocs(recentDocsEl));
 document.querySelector("#open-connections-modal").addEventListener("click", () => openModal(connectionsModalEl));
 document.querySelectorAll("[data-close-modal]").forEach((button) => {
   button.addEventListener("click", closeModals);
@@ -101,11 +106,20 @@ async function init() {
   googleStatusEl.title = status.googleConnected ? "Google connected" : "Google not connected";
   copilotStatusEl.classList.toggle("connected", Boolean(status.githubCopilotConnected));
   copilotStatusEl.title = status.githubCopilotConnected ? "Copilot connected" : "Copilot not connected";
-  document.querySelector("#refresh-recent-docs").disabled = !status.driveListingEnabled;
-  recentDocsEl.innerHTML = status.driveListingEnabled
+  const canListRecentDocs = Boolean(status.googleConnected && status.driveListingEnabled);
+  const recentUnavailableMessage = status.googleConnected
+    ? "Recent Docs requires Drive metadata scope."
+    : "Connect Google to list recent Docs.";
+  document.querySelector("#refresh-main-recent-docs").disabled = !canListRecentDocs;
+  document.querySelector("#refresh-recent-docs").disabled = !canListRecentDocs;
+  mainRecentDocsEl.innerHTML = canListRecentDocs
+    ? `<div class="empty">Loading recent Docs...</div>`
+    : `<div class="empty">${recentUnavailableMessage}</div>`;
+  recentDocsEl.innerHTML = canListRecentDocs
     ? `<div class="empty">Open this picker to load recent Docs.</div>`
-    : `<div class="empty">Recent Docs requires Drive metadata scope.</div>`;
+    : `<div class="empty">${recentUnavailableMessage}</div>`;
   dryRunEl.checked = Boolean(status.dryRunDefault);
+  if (canListRecentDocs) await listRecentDocs(mainRecentDocsEl);
 }
 
 function restorePageTheme() {
@@ -196,8 +210,20 @@ async function loadDocument(documentIdOrUrl = docInput.value) {
   renderFormatToolbar();
   renderDraftBar();
   renderOutline();
+  mainDocBrowserEl.classList.add("hidden");
+  refreshDocButton.disabled = false;
   addChat("System", `Loaded "${currentDocument.title}" with ${currentDocument.paragraphs.length} paragraphs.`);
   closeModals();
+}
+
+async function refreshDocumentFromGoogle() {
+  if (!currentDocument) return;
+  refreshDocButton.disabled = true;
+  try {
+    await refreshDocumentPreservingSuggestions();
+  } finally {
+    refreshDocButton.disabled = false;
+  }
 }
 
 async function refreshDocumentPreservingSuggestions() {
@@ -239,9 +265,9 @@ async function previewParsedDocId() {
     : `Could not parse a valid document ID from: ${data.documentId}`;
 }
 
-async function listRecentDocs() {
+async function listRecentDocs(target = recentDocsEl) {
   const data = await api("/api/docs/recent");
-  recentDocsEl.innerHTML = "";
+  target.innerHTML = "";
   for (const file of data.files) {
     const button = document.createElement("button");
     button.className = "secondary";
@@ -250,14 +276,15 @@ async function listRecentDocs() {
       docInput.value = file.id;
       loadDocument(file.id);
     });
-    recentDocsEl.append(button);
+    target.append(button);
   }
   if (!data.files.length) {
-    recentDocsEl.innerHTML = `<div class="empty">No recent Google Docs found.</div>`;
+    target.innerHTML = `<div class="empty">No recent Google Docs found.</div>`;
   }
 }
 
 function renderOutline() {
+  outlineEl.classList.remove("hidden");
   outlineEl.classList.remove("empty");
   outlineEl.setAttribute("contenteditable", "true");
   outlineEl.setAttribute("spellcheck", "true");

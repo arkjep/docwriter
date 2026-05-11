@@ -281,6 +281,29 @@ h2 {
   color: var(--text);
 }
 
+.doc-browser {
+  width: min(860px, calc(100% - 36px));
+  min-width: 0;
+  justify-self: center;
+  margin: 18px;
+  padding: 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+.doc-browser-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.doc-browser .recent {
+  max-height: min(420px, calc(100vh - 220px));
+  overflow: auto;
+}
+
 .tab-button {
   min-height: 32px;
   flex: 0 0 auto;
