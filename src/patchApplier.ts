@@ -24,7 +24,8 @@ export function buildBatchUpdateRequests(
   // because those ranges do not exist in the document before the insert request.
   const requests: docs_v1.Schema$Request[] = [];
   const emitted = new Set<PatchEdit>();
-  const sorted = [...edits].sort((a, b) => {
+  const normalizedEdits = normalizeReplaceTextEdits(edits, document);
+  const sorted = normalizedEdits.sort((a, b) => {
     const byIndex = b.target.startIndex - a.target.startIndex;
     if (byIndex !== 0) return byIndex;
     return editRequestPriority(a) - editRequestPriority(b);
@@ -57,6 +58,31 @@ export function buildBatchUpdateRequests(
   }
 
   return requests;
+}
+
+export function normalizeReplaceTextEdits(
+  edits: PatchEdit[],
+  document?: NormalizedDocument
+): PatchEdit[] {
+  return edits.map((edit) => {
+    if (edit.type !== "replace_text") return edit;
+    const paragraph = document ? resolveParagraphForRange(document, edit.target) : undefined;
+    if (!paragraph) return edit;
+    const editsThroughParagraphBreak =
+      edit.target.endIndex === paragraph.endIndex &&
+      edit.target.currentText.endsWith("\n");
+    if (!editsThroughParagraphBreak) return edit;
+
+    return {
+      ...edit,
+      target: {
+        ...edit.target,
+        endIndex: edit.target.endIndex - 1,
+        currentText: edit.target.currentText.slice(0, -1)
+      },
+      replacementText: edit.replacementText.endsWith("\n") ? edit.replacementText.slice(0, -1) : edit.replacementText
+    };
+  });
 }
 
 function buildInsertedTextGapResetRequests(
@@ -243,6 +269,23 @@ function resolveTabIdForRange(
   )?.tabId;
 }
 
+function resolveParagraphForRange(
+  document: NormalizedDocument,
+  target: { tabId?: string; paragraphIndex: number; startIndex: number; endIndex: number }
+) {
+  const indexed = document.paragraphs[target.paragraphIndex];
+  if (indexed && paragraphContainsRange(indexed, target)) return indexed;
+  return document.paragraphs.find((paragraph) => paragraphContainsRange(paragraph, target));
+}
+
+function paragraphContainsRange(
+  paragraph: NormalizedDocument["paragraphs"][number],
+  target: { tabId?: string; startIndex: number; endIndex: number }
+) {
+  if (target.tabId && paragraph.tabId !== target.tabId) return false;
+  return target.startIndex >= paragraph.startIndex && target.endIndex <= paragraph.endIndex;
+}
+
 export async function applyPatch(
   auth: OAuth2Client,
   documentId: string,
@@ -252,12 +295,13 @@ export async function applyPatch(
   console.info("Proposed patch before apply:", JSON.stringify(patch, null, 2));
   await logPatch({ documentId, kind: "apply", patch, dryRun: options?.dryRun ?? config.dryRun });
   const freshDocument = await getDocument(auth, documentId);
-  const validation = validatePatchProposal(freshDocument, patch);
+  const normalizedPatch = { ...patch, edits: normalizeReplaceTextEdits(patch.edits, freshDocument) };
+  const validation = validatePatchProposal(freshDocument, normalizedPatch);
   if (!validation.ok) {
     throw new Error(validation.reason);
   }
 
-  const requests = buildBatchUpdateRequests(patch.edits, freshDocument);
+  const requests = buildBatchUpdateRequests(normalizedPatch.edits, freshDocument);
   const dryRun = options?.dryRun ?? config.dryRun;
   if (dryRun || requests.length === 0) {
     return { dryRun: true, requests };

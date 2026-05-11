@@ -72,6 +72,7 @@ The AI layer supports:
 - `github-copilot`: experimental GitHub Copilot token exchange and chat calls
 
 The assistant prompt requires JSON only. Malformed JSON is rejected.
+`AI_MAX_TOKENS` controls the response budget used for AI patch JSON and defaults to `8192`.
 
 ### Experimental GitHub Copilot Provider
 

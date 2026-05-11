@@ -58,7 +58,9 @@ export const patchEditSchema = z.discriminatedUnion("type", [
 ]);
 
 export const patchProposalSchema = z.object({
-  summary: z.string().min(1),
+  summary: z.string().min(1).max(240).refine((value) => !/[\r\n"`]/.test(value), {
+    message: "Summary must be a short plain sentence without newlines, markdown, or quotation marks."
+  }),
   edits: z.array(patchEditSchema).max(50)
 });
 

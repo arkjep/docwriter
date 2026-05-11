@@ -23,6 +23,7 @@ const pendingInlineStyleStart = {
 const pendingControlTextStyle = {};
 const pendingControlTextStyleStart = {};
 let lastHandledTextStyleShortcut = null;
+let isGeneratingEdits = false;
 const PAGE_THEME_STORAGE_KEY = "docs-assistant-page-theme";
 
 const docInput = document.querySelector("#doc-input");
@@ -36,6 +37,7 @@ const fontSizeEl = document.querySelector("#font-size");
 const recentDocsEl = document.querySelector("#recent-docs");
 const chatLogEl = document.querySelector("#chat-log");
 const messageEl = document.querySelector("#message");
+const sendButton = document.querySelector("#send");
 const previewEl = document.querySelector("#preview");
 const applyButton = document.querySelector("#apply");
 const dryRunEl = document.querySelector("#dry-run");
@@ -61,7 +63,8 @@ document.querySelectorAll(".modal").forEach((modal) => {
     if (event.target === modal) closeModals();
   });
 });
-document.querySelector("#send").addEventListener("click", generateEdits);
+sendButton.addEventListener("click", generateEdits);
+messageEl.addEventListener("keydown", handleMessageKeydown);
 document.querySelector("#toggle-page-theme").addEventListener("click", () => {
   setPageTheme(outlineEl.classList.contains("dark-page") ? "light" : "dark");
 });
@@ -2155,37 +2158,58 @@ function getActiveTab() {
 }
 
 async function generateEdits() {
+  if (isGeneratingEdits) return;
   if (!currentDocument) throwToast("Load a document first.");
   const message = messageEl.value.trim();
   if (!message) throwToast("Enter a writing request.");
+  isGeneratingEdits = true;
+  sendButton.disabled = true;
   addChat("You", message);
   messageEl.value = "";
-  const data = await api("/api/ai/propose", {
-    method: "POST",
-    body: JSON.stringify({
-      document: currentDocument,
-      activeTabId,
-      selectedParagraphIndex,
-      selectedText,
-      message
-    })
-  });
-  currentPatch = data.patch;
-  addChat("Assistant", currentPatch.summary);
-  renderPreview();
+  const thinkingMessage = addThinkingMessage();
+  try {
+    const data = await api("/api/ai/propose", {
+      method: "POST",
+      body: JSON.stringify({
+        document: currentDocument,
+        activeTabId,
+        selectedParagraphIndex,
+        selectedText,
+        message
+      })
+    });
+    currentPatch = data.patch;
+    rebuildDraftStateFromPatch();
+    repaintDraftVisualsFromPatch();
+    renderDraftBar();
+    addChat("Assistant", currentPatch.summary);
+    renderPreview();
+  } finally {
+    thinkingMessage.remove();
+    isGeneratingEdits = false;
+    sendButton.disabled = false;
+  }
+}
+
+function handleMessageKeydown(event) {
+  if (event.key !== "Enter" || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.isComposing) {
+    return;
+  }
+  event.preventDefault();
+  generateEdits();
 }
 
 function renderPreview() {
   applyButton.disabled = !currentPatch || currentPatch.edits.length === 0;
-  previewEl.classList.remove("empty");
-  if (!currentPatch.edits.length) {
-    previewEl.textContent = currentPatch.summary;
+  if (!currentPatch?.edits.length) {
+    previewEl.className = "preview empty";
+    previewEl.textContent = "Proposed document diffs will appear here before anything is applied.";
     return;
   }
 
+  previewEl.classList.remove("empty");
   previewEl.innerHTML = `
     <div class="preview-actions"><button id="clear-preview" class="secondary">Clear All</button></div>
-    <p class="preview-summary">${escapeHtml(currentPatch.summary)}</p>
   `;
   currentPatch.edits.forEach((edit, index) => {
     const div = document.createElement("article");
@@ -2650,15 +2674,30 @@ function clearPatch() {
   currentPatch = null;
   applyButton.disabled = true;
   previewEl.className = "preview empty";
-  previewEl.textContent = "AI edit proposals will appear here before anything is applied.";
+  previewEl.textContent = "Proposed document diffs will appear here before anything is applied.";
 }
 
 function addChat(role, text) {
+  if (role === "System") return;
   const div = document.createElement("div");
   div.className = "message";
   div.innerHTML = `<strong>${escapeHtml(role)}</strong>${escapeHtml(text)}`;
   chatLogEl.append(div);
   chatLogEl.scrollTop = chatLogEl.scrollHeight;
+}
+
+function addThinkingMessage() {
+  const div = document.createElement("div");
+  div.className = "message thinking-message";
+  div.setAttribute("role", "status");
+  div.setAttribute("aria-live", "polite");
+  div.innerHTML = `
+    <strong>Assistant</strong>
+    <span class="thinking-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+  `;
+  chatLogEl.append(div);
+  chatLogEl.scrollTop = chatLogEl.scrollHeight;
+  return div;
 }
 
 async function api(url, options = {}) {

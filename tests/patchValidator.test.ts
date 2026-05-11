@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBatchUpdateRequests } from "../src/patchApplier.js";
+import { buildBatchUpdateRequests, normalizeReplaceTextEdits } from "../src/patchApplier.js";
 import { validatePatchProposal } from "../src/patchValidator.js";
 import type { NormalizedDocument, PatchProposal } from "../src/patchTypes.js";
 
@@ -122,6 +122,52 @@ describe("patch validation and request generation", () => {
     expect(requests).toHaveLength(1);
     expect(requests[0].deleteContentRange?.range?.startIndex).toBe(1);
     expect(requests[0].insertText).toBeUndefined();
+  });
+
+  it("preserves paragraph-ending newlines when replacing paragraph text", () => {
+    const patch: PatchProposal = {
+      summary: "Rewrite first paragraph.",
+      edits: [
+        {
+          type: "replace_text",
+          target: { tabId: "tab-1", paragraphIndex: 0, startIndex: 1, endIndex: 18, currentText: "First paragraph.\n" },
+          replacementText: "Opening paragraph.\n"
+        }
+      ]
+    };
+
+    const [normalized] = normalizeReplaceTextEdits(patch.edits, document);
+    expect(normalized).toMatchObject({
+      target: { endIndex: 17, currentText: "First paragraph." },
+      replacementText: "Opening paragraph."
+    });
+
+    const requests = buildBatchUpdateRequests(patch.edits, document);
+    expect(requests[0].deleteContentRange?.range?.endIndex).toBe(17);
+    expect(requests[1].insertText?.text).toBe("Opening paragraph.");
+  });
+
+  it("preserves paragraph-ending newlines when deleting paragraph text", () => {
+    const patch: PatchProposal = {
+      summary: "Delete first paragraph text.",
+      edits: [
+        {
+          type: "replace_text",
+          target: { tabId: "tab-1", paragraphIndex: 0, startIndex: 1, endIndex: 18, currentText: "First paragraph.\n" },
+          replacementText: ""
+        }
+      ]
+    };
+
+    const [normalized] = normalizeReplaceTextEdits(patch.edits, document);
+    expect(normalized).toMatchObject({
+      target: { endIndex: 17, currentText: "First paragraph." },
+      replacementText: ""
+    });
+
+    const requests = buildBatchUpdateRequests(patch.edits, document);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].deleteContentRange?.range?.endIndex).toBe(17);
   });
 
   it("builds insert-only requests for empty paragraph draft edits", () => {

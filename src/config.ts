@@ -28,7 +28,8 @@ export const config = {
     provider: (process.env.AI_PROVIDER ?? "openai-compatible") as AiProvider,
     apiKey: process.env.AI_API_KEY ?? "",
     baseUrl: process.env.AI_BASE_URL ?? "https://api.openai.com/v1",
-    model: process.env.AI_MODEL ?? "gpt-4.1-mini"
+    model: process.env.AI_MODEL ?? "gpt-4.1-mini",
+    maxTokens: Number(process.env.AI_MAX_TOKENS ?? 8192)
   },
   githubCopilot: {
     githubHost: process.env.GITHUB_COPILOT_HOST ?? "github.com",

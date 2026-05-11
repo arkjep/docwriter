@@ -342,6 +342,8 @@ async function callCopilotChatCompletions(auth: CopilotAuth, system: string, use
     body: JSON.stringify({
       model: config.ai.model,
       temperature: 0.2,
+      max_tokens: config.ai.maxTokens,
+      response_format: { type: "json_object" },
       messages: [
         { role: "system", content: system },
         { role: "user", content: user }
@@ -351,10 +353,11 @@ async function callCopilotChatCompletions(auth: CopilotAuth, system: string, use
 }
 
 async function readCopilotChatContent(response: Response) {
-  const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-  const content = data.choices?.[0]?.message?.content;
+  const data = await response.json() as { choices?: Array<{ finish_reason?: string; message?: { content?: string } }> };
+  const choice = data.choices?.[0];
+  const content = choice?.message?.content;
   if (!content) throw new Error("GitHub Copilot returned no chat content.");
-  return content;
+  return { content, finishReason: choice?.finish_reason };
 }
 
 export async function listGitHubCopilotModels() {
